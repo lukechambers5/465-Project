@@ -1,1 +1,76 @@
-body { margin: 0; background: #f2f5f7; }
+@import "@fontsource/alfa-slab-one/400.css";
+@import "@fontsource/yellowtail/400.css";
+@import "@fontsource/special-elite/400.css";
+@import "@fontsource/reenie-beanie/400.css";
+@import "@fontsource/zilla-slab/400.css";
+@import "@fontsource/zilla-slab/600.css";
+@import "@fontsource/zilla-slab/400-italic.css";
+
+:root {
+  /* Type, by the job it does out there. */
+  --font-sign: "Alfa Slab One", "Rockwell", serif; /* routed park signs, stamps */
+  --font-script: "Yellowtail", "Brush Script MT", cursive; /* old Florida roadside */
+  --font-type: "Special Elite", "Courier New", monospace; /* the message on the hook */
+  --font-hand: "Reenie Beanie", "Segoe Print", cursive; /* someone's pencil notes */
+  --font-text: "Zilla Slab", Georgia, serif; /* field-guide text */
+
+  /* Materials. */
+  --wood: #5a3a22;
+  --wood-dark: #3a2415;
+  --wood-light: #7a5230;
+  --routed: #f0d9a0;
+  --marigold: #e9a92f;
+  --bobber-red: #c8331f;
+  --paper: #e9dcae;
+  --paper-light: #f4eac8;
+  --paper-rule: #a9bd9f;
+  --ink: #2a2118;
+  --ink-soft: #5d4e3a;
+  --gator: #1c3024;
+  --stamp-good: #2c6a43;
+  --stamp-bad: #b02a1b;
+
+  /* Long-grain noise laid over any wood color. */
+  --grain-wood: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='220'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.006 .32' numOctaves='4' seed='8'/%3E%3CfeColorMatrix values='0 0 0 0 .08 0 0 0 0 .04 0 0 0 0 .02 1.5 0 0 0 -.42'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
+  --grain-post: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='800'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.28 .006' numOctaves='4' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 .06 0 0 0 0 .03 0 0 0 0 .02 1.6 0 0 0 -.45'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
+  --grain-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.09 .14' numOctaves='5' seed='12' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .32 0 0 0 0 .12 .42 0 0 0 -.15'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E");
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #162822;
+  color: var(--ink);
+  font-family: var(--font-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+dl,
+dd,
+ul {
+  margin: 0;
+}
+
+ul {
+  padding: 0;
+}
