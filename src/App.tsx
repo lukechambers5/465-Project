@@ -11,7 +11,7 @@ import { boatById, bobberById, rodById } from "./game/catalog";
 import type { Slot } from "./game/catalog";
 import { fishValue, generateFish } from "./game/fishgen";
 import type { CaughtFish } from "./game/fishgen";
-import { RARITIES, rollRarity } from "./game/rarity";
+import { RARITIES, rollLegitPay, rollRarity } from "./game/rarity";
 import { loadSave, NEW_SAVE, writeSave } from "./game/save";
 import { guideFishFor } from "./data/species";
 import { Grain, Scene } from "./scene/Scene";
@@ -49,6 +49,7 @@ interface Feedback {
   reel: boolean;
   fish: Message;
   caught: CaughtFish | null;
+  reward: number;
 }
 
 export default function App() {
@@ -91,13 +92,15 @@ export default function App() {
     if (!fish) return;
     const correct = reel === fish.isPhish;
     const caught = reel && fish.isPhish ? generateFish(level, fish.rarity, fish.technique) : null;
+    const reward = !reel && !fish.isPhish ? rollLegitPay(fish.rarity) : 0;
     setSave((s) => ({
       ...s,
+      coins: s.coins + reward,
       score: { correct: s.score.correct + (correct ? 1 : 0), total: s.score.total + 1 },
       fish: caught ? [caught, ...s.fish] : s.fish,
       guide: caught && !s.guide.includes(fish.id) ? [...s.guide, fish.id] : s.guide,
     }));
-    setFeedback({ reel, fish, caught });
+    setFeedback({ reel, fish, caught, reward });
     setFish(null);
     setPhase("landed");
   }
@@ -192,7 +195,7 @@ export default function App() {
 
           {phase === "landed" && feedback && (
             <div className="desk">
-              <VerdictNote fish={feedback.fish} reel={feedback.reel} caught={feedback.caught} onCast={cast} />
+              <VerdictNote fish={feedback.fish} reel={feedback.reel} caught={feedback.caught} reward={feedback.reward} onCast={cast} />
             </div>
           )}
         </main>

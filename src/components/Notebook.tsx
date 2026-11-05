@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { Message } from "../data/messages";
 import { guideFishFor, SPECIES } from "../data/species";
 import type { CaughtFish } from "../game/fishgen";
 import { fishName, fishValue, wearOf } from "../game/fishgen";
 import { RARITY } from "../game/rarity";
 import Fish, { SkinnedFish } from "../scene/Fish";
+import FullMessage from "./FullMessage";
 
 /** What came up on the hook: the message, on a page of a waterproof notebook. */
 export function BiteNote({ fish, onDecide }: { fish: Message; onDecide: (reel: boolean) => void }) {
-  const [showHeaders, setShowHeaders] = useState(false);
+  const [open, setOpen] = useState(false);
+  const closeFull = useCallback(() => setOpen(false), []);
   return (
     <article className="notebook" aria-live="polite">
       <div className="spiral" aria-hidden="true" />
@@ -29,36 +31,15 @@ export function BiteNote({ fish, onDecide }: { fish: Message; onDecide: (reel: b
           </div>
         )}
       </dl>
-      <div className={`slip-scroll ${fish.fold ? "has-fold" : ""}`} tabIndex={fish.fold ? 0 : undefined}>
-        <p className="slip-body">{fish.body}</p>
-        {fish.fold && (
-          <>
-            {/* The push-down itself: a tall blank gap the player has to scroll past. */}
-            <div className="slip-gap" aria-hidden="true" />
-            <p className="slip-body">{fish.fold}</p>
-          </>
-        )}
+      <p className="slip-body">{fish.body}</p>
+
+      {/* On every card, always: opening it must never say anything about the answer. */}
+      <div className="note-row">
+        <p className="scrawl">well? what've you got...</p>
+        <button className="full-btn" onClick={() => setOpen(true)}>
+          {/\bemail\b/i.test(fish.channel) ? "Open full email" : "Open full message"}
+        </button>
       </div>
-
-      {fish.headers && (
-        <div className="headers">
-          <button className="headers-btn" aria-expanded={showHeaders} onClick={() => setShowHeaders((s) => !s)}>
-            {showHeaders ? "Hide the raw headers" : "Pull the raw headers"}
-          </button>
-          {showHeaders && (
-            <dl className="header-list">
-              {fish.headers.map((h) => (
-                <div key={h.label}>
-                  <dt>{h.label}</dt>
-                  <dd>{h.value}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
-        </div>
-      )}
-
-      <p className="scrawl">well? what've you got...</p>
       <div className="calls">
         <button className="call call-reel" onClick={() => onDecide(true)}>
           <strong>Reel it in</strong>
@@ -69,6 +50,7 @@ export function BiteNote({ fish, onDecide }: { fish: Message; onDecide: (reel: b
           <span>it's the real thing</span>
         </button>
       </div>
+      {open && <FullMessage fish={fish} onClose={closeFull} />}
     </article>
   );
 }
@@ -102,16 +84,21 @@ export function VerdictNote({
   fish,
   reel,
   caught,
+  reward,
   onCast,
 }: {
   fish: Message;
   reel: boolean;
   caught: CaughtFish | null;
+  /** Coins paid on the spot for correctly letting a legit message go. */
+  reward: number;
   onCast: () => void;
 }) {
   const correct = reel === fish.isPhish;
   const words = verdictWords(reel, fish.isPhish);
   const tier = RARITY[fish.rarity];
+  // Afterward, show only the lines that decided it, marked good or bad.
+  const telling = fish.headers.filter((h) => h.tone);
   const printKind = fish.isPhish ? guideFishFor(fish.technique) : "mullet";
   return (
     <article className={`notebook verdict ${correct ? "good" : "bad"}`} aria-live="polite">
@@ -120,6 +107,11 @@ export function VerdictNote({
       <p className="verdict-line">{words.line}</p>
 
       {caught && <CatchReveal caught={caught} />}
+      {reward > 0 && (
+        <p className="reward">
+          <span className="coin" aria-hidden="true" />+{reward} coins <small>for trusting the right one</small>
+        </p>
+      )}
 
       <div className={`verdict-id ${caught ? "no-print" : ""}`}>
         {!caught && <Fish kind={printKind} className="print" />}
@@ -138,9 +130,9 @@ export function VerdictNote({
         </div>
       </div>
 
-      {fish.headers && (
+      {telling.length > 0 && (
         <dl className="header-list verdict-headers">
-          {fish.headers.map((h) => (
+          {telling.map((h) => (
             <div key={h.label} className={h.tone ? `tone-${h.tone}` : undefined}>
               <dt>{h.label}</dt>
               <dd>{h.value}</dd>

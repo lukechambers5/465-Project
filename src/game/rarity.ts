@@ -11,6 +11,8 @@ interface RarityInfo {
   ink: string;
   /** What a fish of this tier sells for before wear, size and trophy. */
   price: number;
+  /** Coins for correctly letting a legit message of this tier go. */
+  legitPay: [number, number];
   blurb: string;
 }
 
@@ -20,6 +22,7 @@ export const RARITY: Record<Rarity, RarityInfo> = {
     color: "#b4c4cc",
     ink: "#55666e",
     price: 8,
+    legitPay: [25, 60],
     blurb: "Typos, fake title, fake address. Wrong on all three counts.",
   },
   rare: {
@@ -27,6 +30,7 @@ export const RARITY: Record<Rarity, RarityInfo> = {
     color: "#5b86ff",
     ink: "#2c4fb8",
     price: 25,
+    legitPay: [40, 90],
     blurb: "One of title, address or text looks right. The others don't.",
   },
   epic: {
@@ -34,6 +38,7 @@ export const RARITY: Record<Rarity, RarityInfo> = {
     color: "#b45cff",
     ink: "#7a2fc2",
     price: 80,
+    legitPay: [70, 140],
     blurb: "State of the art: AI writing, session theft, cloned voices.",
   },
   legendary: {
@@ -41,6 +46,7 @@ export const RARITY: Record<Rarity, RarityInfo> = {
     color: "#ff5a3c",
     ink: "#bb2f16",
     price: 300,
+    legitPay: [110, 200],
     blurb: "Very real. Hijacked threads and trusted services.",
   },
   mythic: {
@@ -48,9 +54,16 @@ export const RARITY: Record<Rarity, RarityInfo> = {
     color: "#ffd34d",
     ink: "#96700a",
     price: 1200,
+    legitPay: [170, 250],
     blurb: "Spoofed real senders and hidden payloads. Check the headers.",
   },
 };
+
+/** A coin payout from 25 to 250: harder legit messages pay better. */
+export function rollLegitPay(rarity: Rarity): number {
+  const [lo, hi] = RARITY[rarity].legitPay;
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
 
 /** Base chance of each tier by water, in percent. Zero stays zero with any rod. */
 const ODDS: Record<Level, Record<Rarity, number>> = {
